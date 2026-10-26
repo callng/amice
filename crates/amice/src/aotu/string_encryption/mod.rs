@@ -305,9 +305,15 @@ pub(crate) fn instruction_in_funclet_region(inst: LLVMValueRef) -> bool {
     }
 }
 
-/// Whether `arr` holds an encryptable constant string: either a classical
-/// [N x i8] array accepted by LLVMIsConstantString, or a wide-character array
-/// ([N x i16] / [N x i32], see `wide_string_elem_size`).
+/// Recognize Clang-generated string literals on Itanium and MSVC targets.
+pub(crate) fn is_compiler_string_name(name: &str) -> bool {
+    // Clang uses .str on Itanium targets and MSVC's ??_C@_0 / ??_C@_1
+    // decorations for narrow / wide literals on Windows. Keep RTTI and
+    // arbitrary user globals outside the default compiler-string filter.
+    name.starts_with(".str") || name.starts_with("??_C@_0") || name.starts_with("??_C@_1")
+}
+
+/// Whether the array holds a narrow or wide constant string.
 pub(crate) fn is_const_string_array(arr: &ArrayValue) -> bool {
     arr.is_const_string() || wide_string_elem_size(arr).is_some()
 }

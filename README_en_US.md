@@ -35,6 +35,14 @@ AMICE_STRING_ENCRYPTION=true \
 
 New here? Follow the [Quick Start guide](docs/QuickStart_en_US.md) to run a verifiable example in five minutes, including macOS, Android, Rust and CMake integration.
 
+On Windows x64, install Rust/MSVC and a Windows SDK, then prepare LLVM 20, build the DLL and run C/C++ verification:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ./scripts/build_windows.ps1 -Setup -SmokeTest
+```
+
+Windows uses clang → IR → opt → clang. See [Windows source builds](docs/LLVMSetup_en_US.md#windows) for host requirements and limitations.
+
 > **Note**: Only use Amice on software you are authorized to protect. Obfuscation changes code generation — run your project's existing tests after enabling it. Obfuscated binaries may trigger antivirus or app-store false positives. Strong passes such as VMP increase size and reduce performance; enable them per function.
 
 ## Documentation

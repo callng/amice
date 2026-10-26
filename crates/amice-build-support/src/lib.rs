@@ -78,6 +78,9 @@ impl LlvmProbe {
     /// `llvm-config` (honouring `LLVM_SYS_<major><minor>_PREFIX`).
     pub fn detect() -> Self {
         let (major, minor) = llvm_version_from_features();
+        if target_os() == "windows" {
+            windows_link_host().unwrap_or_else(|message| panic!("{message}"));
+        }
         let config_path = locate_llvm_config(major, minor);
         Self {
             major,
@@ -183,15 +186,31 @@ pub fn emit_llvm_link(probe: &LlvmProbe) {
     println!("cargo:rustc-link-search=native={libdir}");
 
     if target_os() == "windows" {
+        let host = windows_link_host().unwrap_or_else(|message| panic!("{message}"));
+        for library in ["LLVM-C", host] {
+            let path = PathBuf::from(&libdir).join(format!("{library}.lib"));
+            assert!(
+                path.is_file(),
+                "amice-build-support: missing {}. Windows requires an LLVM plugin development toolchain; run scripts/build_windows.ps1 -Setup or set {} to a compatible installation",
+                path.display(),
+                probe.env_prefix_var()
+            );
+        }
         println!("cargo:rustc-link-lib=dylib=LLVM-C");
-        if env::var_os("CARGO_FEATURE_WIN_LINK_OPT").is_some() {
-            println!("cargo:rustc-link-lib=dylib=opt");
-        }
-        if env::var_os("CARGO_FEATURE_WIN_LINK_LLD").is_some() {
-            println!("cargo:rustc-link-lib=dylib=lld");
-        }
+        println!("cargo:rustc-link-lib=dylib={host}");
     } else {
         println!("cargo:rustc-link-lib=dylib=LLVM");
+    }
+}
+
+fn windows_link_host() -> Result<&'static str, &'static str> {
+    match (
+        env::var_os("CARGO_FEATURE_WIN_LINK_OPT").is_some(),
+        env::var_os("CARGO_FEATURE_WIN_LINK_LLD").is_some(),
+    ) {
+        (true, false) => Ok("opt"),
+        (false, true) => Ok("lld"),
+        _ => Err("amice-build-support: Windows builds require exactly one of win-link-opt or win-link-lld; for example: cargo build --release --no-default-features --features llvm20-1,win-link-opt"),
     }
 }
 

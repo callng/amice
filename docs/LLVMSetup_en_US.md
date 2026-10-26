@@ -132,6 +132,22 @@ Use this same LLVM prefix with the verification example in [Quick Start](QuickSt
 
 ## Windows
 
+### Automated Setup, Build and Verification
+
+Install Rust MSVC x64 and the Visual Studio/Build Tools Desktop development with C++ workload, including a Windows SDK. From an ordinary PowerShell at the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ./scripts/build_windows.ps1 -Setup -SmokeTest
+```
+
+The script downloads the LLVM 20.1.1 plugin development toolchain into Git-ignored `.local/toolchains`, initializes MSVC x64, checks headers/import libraries and builds an opt-linked DLL. No LLVM rebuild or permanent environment changes are needed.
+
+Output: `target/windows-llvm20-opt/x86_64-pc-windows-msvc/release/amice.dll`. The smoke test uses clang to emit IR, loads the DLL through opt, and compiles/runs C/C++ string encryption, control-flow flattening and VMP examples. It verifies IR, equivalent output and hidden plaintext. Test outputs go to `target/windows-smoke`.
+
+For an existing compatible toolchain, use `-LlvmMajor 20 -LlvmPrefix C:/llvm20 -SmokeTest`; LLVM 18, 19 and 20 are supported. Use `-ClangPrefix C:/clang20` for an existing matching clang; `-Setup -SmokeTest` downloads clang separately when missing. `-LinkHost lld` is retained for custom toolchains with complete LLD exports; the upstream LLVM 20.1.1 LLD lacks required C++ exports and cannot link this variant.
+
+Windows import libraries bind the DLL to its host. Use `win-link-opt` with clang → IR → opt → clang; ordinary Windows clang cannot load this DLL via `-fpass-plugin`. `win-link-lld` targets the matching LLD LTO interface. Exactly one link-host feature is required. This does not imply compatibility with ordinary LLVM installers, arbitrary rustc or Android NDK host toolchains.
+
 ### Prepare Native Build Tools
 
 Install the Visual Studio Build Tools **Desktop development with C++** workload (MSVC and Windows SDK), and Rust's `x86_64-pc-windows-msvc` toolchain. Run the commands in a new **Developer PowerShell for VS**.

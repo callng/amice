@@ -27,7 +27,7 @@ pub struct StringEncryptionConfig {
     #[serde(alias = "inline_decrypt_fn")]
     pub inline_decrypt: bool,
 
-    /// Only process strings from the `.str` section
+    /// Only process compiler-generated string literal globals
     pub only_dot_str: bool,
 
     /// Allow stack allocation for decryption in non-entry blocks

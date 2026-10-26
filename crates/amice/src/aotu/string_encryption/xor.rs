@@ -1,7 +1,7 @@
 use crate::aotu::string_encryption::{
     EncryptedGlobalValue, InsertPointCollection, STACK_ALLOC_THRESHOLD, StringEncryption, StringEncryptionAlgo,
     alloc_stack_string, array_as_const_string_bytes, collect_insert_points, global_has_unsupported_user,
-    is_const_string_array, rebuild_const_string, use_user_supported,
+    is_compiler_string_name, is_const_string_array, rebuild_const_string, use_user_supported,
 };
 use crate::config::{StringDecryptTiming as DecryptTiming, StringEncryptionConfig};
 use amice_llvm::inkwell2::{BasicBlockExt, BuilderExt, LLVMValueRefExt, ModuleExt};
@@ -60,7 +60,7 @@ fn do_handle<'a>(cfg: &StringEncryptionConfig, module: &mut Module<'a>) -> anyho
         })
         .filter(|global| !matches!(global.get_linkage(), Linkage::External))
         .filter(|global| {
-            let name_ok = !cfg.only_dot_str || global.get_name().to_str().is_ok_and(|s| s.starts_with(".str"));
+            let name_ok = !cfg.only_dot_str || global.get_name().to_str().is_ok_and(is_compiler_string_name);
             let section_ok = global
                 .get_section()
                 .is_none_or(|section| section.to_str() != Ok("llvm.metadata"));

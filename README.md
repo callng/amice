@@ -35,6 +35,14 @@ AMICE_STRING_ENCRYPTION=true \
 
 第一次使用？跟着 [快速上手](docs/QuickStart_zh_CN.md) 用五分钟跑通一个可验证的示例，含 macOS、Android、Rust 与 CMake 接入。
 
+Windows x64 安装 Rust/MSVC 和 Windows SDK 后，可一键准备 LLVM 20、构建 DLL 并运行 C/C++ 验证：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ./scripts/build_windows.ps1 -Setup -SmokeTest
+```
+
+Windows 使用 clang → IR → opt → clang 流程；详细用法与宿主限制见 [Windows 源码构建](docs/LLVMSetup_zh_CN.md#windows)。
+
 > **使用注意**：请仅在你有权保护的软件上使用 Amice。混淆会改变代码生成，接入后请运行项目原有测试；混淆产物可能触发杀毒软件或应用商店的误报；VMP 等强混淆会增大体积、影响运行性能，建议按函数启用。
 
 ## 文档

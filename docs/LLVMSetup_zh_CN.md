@@ -132,6 +132,22 @@ cargo build --release --no-default-features --features llvm22-1
 
 ## Windows
 
+### 一键构建与验证
+
+安装 Rust MSVC x64 工具链和 Visual Studio/Build Tools 的“使用 C++ 的桌面开发”组件（含 Windows SDK）后，在普通 PowerShell 执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ./scripts/build_windows.ps1 -Setup -SmokeTest
+```
+
+脚本下载 LLVM 20.1.1 插件开发工具链到 Git 忽略的 `.local/toolchains`，自动初始化 MSVC x64，检查版本、头文件及导入库，然后构建 `win-link-opt` 插件。无需重编 LLVM 或设置永久环境变量。
+
+产物为 `target/windows-llvm20-opt/x86_64-pc-windows-msvc/release/amice.dll`。测试通过 clang 生成 IR、opt 加载 DLL，再编译运行 C/C++ 的字符串加密、控制流平坦化和 VMP 示例；检查 IR 合法性、程序输出和明文隐藏。测试产物保存在 `target/windows-smoke`。
+
+已有兼容工具链可用 `-LlvmMajor 20 -LlvmPrefix C:/llvm20 -SmokeTest`；支持 LLVM 18、19、20。`-ClangPrefix C:/clang20` 可指定已有的同版本 clang；`-Setup -SmokeTest` 会在缺失时另行下载 clang。`-LinkHost lld` 保留供自备完整 LLD 导出库的工具链使用；目前上游 LLVM 20.1.1 包的 lld 缺少所需 C++ 导出，不能直接完成该变体链接。
+
+Windows 导入库与加载宿主绑定：`win-link-opt` 使用 clang → IR → opt → clang 流程，不能直接由普通 Windows clang 的 `-fpass-plugin` 加载；`win-link-lld` 用于对应 LLD 的 LTO 接口。两种 feature 必须且只能启用一种。脚本不表示普通 LLVM 安装包、任意 rustc 或 Android NDK 宿主工具链均兼容。
+
 ### 准备原生工具链
 
 安装 Visual Studio Build Tools 的“使用 C++ 的桌面开发”组件（含 MSVC 和 Windows SDK）及 Rust 的 `x86_64-pc-windows-msvc` 工具链，在新的 **Developer PowerShell for VS** 中执行下面的命令。

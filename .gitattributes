@@ -1,0 +1,3 @@
+# Embedded VM profile tests apply exact multiline mutations. Keep their
+# sources identical on Windows checkouts with core.autocrlf enabled.
+*.vm text eol=lf

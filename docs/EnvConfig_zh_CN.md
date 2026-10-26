@@ -63,7 +63,7 @@
 | AMICE_STRING_DECRYPT_TIMING              | 控制字符串的解密时机：<br/>• `global` —— 程序启动时在全局初始化阶段一次性解密所有受保护字符串；<br/>• `lazy` —— 在每个字符串首次被使用前按需解密（随后可缓存）。 <br/>  备注：解密在栈上的字符串不支持这个配置！ | lazy  |
 | AMICE_STRING_STACK_ALLOC                 | (beta) 控制解密字符串的内存分配方式：<br/>• `true` —— 将解密的字符串分配到栈上；<br/>• `false` —— 将解密的字符串分配到堆上。<br/>  备注：栈分配模式下仅支持 `lazy` 解密时机！            | false |
 | AMICE_STRING_INLINE_DECRYPT_FN           | 控制是否内联解密函数：<br/>• `true` ——内联解密函数；<br/>• `false` —— 不内联解密函数。                                                                   | false |
-| AMICE_STRING_ONLY_DOT_STRING             | 控制是否仅处理 `.str` 段中的字符串：<br/>• `true` ——只加密`.str`字符串；<br/>• `false` —— 可能加密了llvm::Module内的类型为char[]全局变量，导致崩溃。                    | true  |
+| AMICE_STRING_ONLY_DOT_STRING             | 控制是否仅处理编译器生成的 `.str*` 或 MSVC `??_C@_0/1*` 字符串：<br/>• `true` ——只加密编译器字符串字面量；<br/>• `false` —— 可能加密了llvm::Module内的类型为char[]全局变量，导致崩溃。                           | true   |
 | AMICE_STRING_ALLOW_NON_ENTRY_STACK_ALLOC | 控制是否允许在栈解密模式下，在非基本块分配栈：<br/>• `true` ——允许，许多LLVM优化pass假设所有 alloca 都在入口块；<br/>• `false` —— 推荐                                   | false |
 
 > **Rust 注意**
@@ -75,7 +75,7 @@
 
 > **宽字符（UTF-16/UTF-32/wchar_t）判定说明**
 > - 宽字符串的判定与 `LLVMIsConstantString` 对 i8 的规则一致：全部元素为常量整数且末元素为 0；i16/i32 以外的宽度（如 `[N x i64]`）一律跳过。
-> - MSVC 命名目标（Windows）的宽字面量全局名形如 `??_C@...`，不含 `.str`，默认 `only_dot_str=true` 时不会命中，需要 `AMICE_STRING_ONLY_DOT_STRING=false`。
+> - MSVC 命名目标（Windows）的窄/宽字面量全局名形如 `??_C@_0...` / `??_C@_1...`，默认编译器字符串筛选同样识别这两种名称，无需关闭筛选。
 > - `zeroinitializer`（如 `u""`）会因空值检查被跳过，而显式的 `[i16 0, i16 0, ...]` 会被加密——两种写法行为不一致，i8 路径同样如此。
 
 ## 间接调用混淆

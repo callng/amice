@@ -1,7 +1,7 @@
 use crate::aotu::string_encryption::{
     EncryptedGlobalValue, InsertPointCollection, STACK_ALLOC_THRESHOLD, StringEncryptionAlgo, alloc_stack_string,
-    array_as_const_string_bytes, collect_insert_points, global_has_unsupported_user, is_const_string_array,
-    rebuild_const_string, use_user_supported,
+    array_as_const_string_bytes, collect_insert_points, global_has_unsupported_user, is_compiler_string_name,
+    is_const_string_array, rebuild_const_string, use_user_supported,
 };
 use crate::config::{StringDecryptTiming as DecryptTiming, StringEncryptionConfig};
 use amice_llvm::const_array;
@@ -54,7 +54,7 @@ fn do_handle<'a>(cfg: &StringEncryptionConfig, module: &mut Module<'a>, key: &[u
         .get_globals()
         .filter(|global| !matches!(global.get_linkage(), Linkage::External))
         .filter(|global| {
-            (!cfg.only_dot_str || global.get_name().to_str().is_ok_and(|s| s.starts_with(".str")))
+            (!cfg.only_dot_str || global.get_name().to_str().is_ok_and(is_compiler_string_name))
                 && global
                     .get_section()
                     .is_none_or(|section| section.to_str() != Ok("llvm.metadata"))

@@ -63,7 +63,7 @@ Source code: `crates/amice/src/aotu/string_encryption`
 | AMICE_STRING_DECRYPT_TIMING              | String decryption timing:<br/>- `global` — decrypt all protected strings at global initialization during program startup<br/>- `lazy` — decrypt on-demand before first use (then cache)<br/>Note: Stack-allocated strings do not support this config! | lazy    |
 | AMICE_STRING_STACK_ALLOC                 | (beta) Memory allocation for decrypted strings:<br/>- `true` — allocate on stack<br/>- `false` — allocate on heap<br/>Note: Stack allocation only supports `lazy` timing!                                                                             | false   |
 | AMICE_STRING_INLINE_DECRYPT_FN           | Inline decrypt function:<br/>- `true` — inline<br/>- `false` — don't inline                                                                                                                                                                           | false   |
-| AMICE_STRING_ONLY_DOT_STRING             | Only process strings in `.str` section:<br/>- `true` — only encrypt `.str` strings<br/>- `false` — may encrypt char[] global variables in llvm::Module, possibly causing crashes                                                                      | true    |
+| AMICE_STRING_ONLY_DOT_STRING             | Only process compiler-generated `.str*` or MSVC `??_C@_0/1*` literals:<br/>- `true` — only encrypt compiler-generated literals<br/>- `false` — may encrypt char[] global variables in llvm::Module, possibly causing crashes                          | true    |
 | AMICE_STRING_ALLOW_NON_ENTRY_STACK_ALLOC | Allow stack allocation in non-entry blocks (stack decryption mode):<br/>- `true` — allow (many LLVM optimization passes assume all alloca are in entry block)<br/>- `false` — recommended                                                             | false   |
 
 > **Note for Rust**: 
@@ -75,7 +75,7 @@ Source code: `crates/amice/src/aotu/string_encryption`
 
 > **Wide-character (UTF-16/UTF-32/wchar_t) detection notes**
 > - A wide array is accepted under the same rule `LLVMIsConstantString` applies to i8: every element must be a constant integer and the last one must be null; widths other than i16/i32 (e.g. `[N x i64]`) are always skipped.
-> - On MSVC-named targets (Windows), wide literal globals are named like `??_C@...` without `.str`, so the default `only_dot_str=true` will not match them; set `AMICE_STRING_ONLY_DOT_STRING=false`.
+> - On MSVC-named targets (Windows), narrow/wide literals use `??_C@_0...` / `??_C@_1...`. The default compiler-string filter also recognizes these names; disabling the filter is unnecessary.
 > - `zeroinitializer` (e.g. `u""`) is skipped by the null check, while an explicit `[i16 0, i16 0, ...]` is encrypted — the two spellings behave differently, as they already do on the i8 path.
 
 ## Indirect Call Obfuscation
