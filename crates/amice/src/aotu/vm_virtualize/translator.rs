@@ -7708,12 +7708,17 @@ impl<'m, 'ctx, 'profile> FunctionLowerer<'m, 'ctx, 'profile> {
         } else {
             None
         };
-        let static_base = if self.track_object_sizes && gep_is_inbounds(instruction) && dynamic_base.is_none() && dynamic_gep_base.is_none() {
+        let static_base = if self.track_object_sizes
+            && gep_is_inbounds(instruction)
+            && dynamic_base.is_none()
+            && dynamic_gep_base.is_none()
+        {
             self.static_object_base(base_value)?
         } else {
             None
         };
-        let static_gep_base = if self.track_object_sizes && gep_is_inbounds(instruction)
+        let static_gep_base = if self.track_object_sizes
+            && gep_is_inbounds(instruction)
             && dynamic_base.is_none()
             && dynamic_gep_base.is_none()
             && static_base.is_none()
@@ -20145,9 +20150,9 @@ fn function_contains_objectsize(function: FunctionValue<'_>) -> bool {
     function.get_basic_blocks().iter().any(|block| {
         block.get_instructions().any(|instruction| {
             instruction.get_opcode() == InstructionOpcode::Call
-                && CallInst::new(instruction).get_call_function().is_some_and(|callee| {
-                    callee.get_name().to_bytes().starts_with(b"llvm.objectsize.")
-                })
+                && CallInst::new(instruction)
+                    .get_call_function()
+                    .is_some_and(|callee| callee.get_name().to_bytes().starts_with(b"llvm.objectsize."))
         })
     })
 }
