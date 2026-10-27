@@ -52,3 +52,17 @@ inline entry, module and function scope, and O0/O2. It covers conditional
 branches, backedges, nested calls, recursion, pointer loads/stores, wide
 constants, and constant-pool decoding. Android cases without a serial are
 explicitly marked build-only. It never installs a Zygisk module.
+
+## Pointer metadata pressure
+
+The translator now creates dynamic GEP object-extent metadata only when the
+function contains `llvm.objectsize.*`. Without this query the extra register
+state is unobservable, but previously accumulated until the x0..x31 budget was
+exhausted in larger optnone functions. Functions with objectsize retain the
+existing conservative tracking, including static/dynamic alloca and chained GEP.
+
+Run `scripts/test_vm_gep_pressure.py --llvm PATH --plugin PATH --output PATH`
+on Linux to compare real host executables at O0/O2. The regression includes
+80 local fields with constant/dynamic GEPs, static objectsize and dynamic-allocation
+objectsize; it requires every fixture to have an emitted VM. This is a compiler
+capacity fix, not an anti-emulation or secrecy feature.

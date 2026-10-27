@@ -2299,6 +2299,8 @@ struct FunctionLowerer<'m, 'ctx, 'profile> {
     temporary_regs: Vec<u8>,
     // 函数是否包含 native call；无调用函数不再预留 native_call ABI 寄存器跨度。
     has_native_calls: bool,
+    // GEP extent metadata owns extra registers. Only objectsize can observe it.
+    track_object_sizes: bool,
     // translator 溢出帧：分配失败时把 block-local 值按 8 字节槽存入帧并释放寄存器，
     // 使用点经 materialize_value load 回临时。帧 alloca 首次溢出时前插到函数入口。
     spill_frame_base: Option<u8>,
@@ -2766,6 +2768,7 @@ impl<'m, 'ctx, 'profile> FunctionLowerer<'m, 'ctx, 'profile> {
             reuse_plan: None,
             temporary_regs: Vec::new(),
             has_native_calls,
+            track_object_sizes: function_contains_objectsize(function),
             spill_frame_base: None,
             spill_frame_scratch: None,
             spill_slots_used: vec![false; SPILL_FRAME_SLOTS],
@@ -7695,22 +7698,22 @@ impl<'m, 'ctx, 'profile> FunctionLowerer<'m, 'ctx, 'profile> {
         let base_value = gep
             .get_pointer_operand()
             .context("getelementptr has no pointer operand")?;
-        let dynamic_base = if gep_is_inbounds(instruction) {
+        let dynamic_base = if self.track_object_sizes && gep_is_inbounds(instruction) {
             self.dynamic_alloca_object(base_value)?
         } else {
             None
         };
-        let dynamic_gep_base = if gep_is_inbounds(instruction) && dynamic_base.is_none() {
+        let dynamic_gep_base = if self.track_object_sizes && gep_is_inbounds(instruction) && dynamic_base.is_none() {
             self.dynamic_alloca_gep_object(base_value)?
         } else {
             None
         };
-        let static_base = if gep_is_inbounds(instruction) && dynamic_base.is_none() && dynamic_gep_base.is_none() {
+        let static_base = if self.track_object_sizes && gep_is_inbounds(instruction) && dynamic_base.is_none() && dynamic_gep_base.is_none() {
             self.static_object_base(base_value)?
         } else {
             None
         };
-        let static_gep_base = if gep_is_inbounds(instruction)
+        let static_gep_base = if self.track_object_sizes && gep_is_inbounds(instruction)
             && dynamic_base.is_none()
             && dynamic_gep_base.is_none()
             && static_base.is_none()
@@ -20134,6 +20137,19 @@ fn instruction_value_operands(instruction: InstructionValue<'_>) -> Vec<BasicVal
 
 fn instruction_operand_value(instruction: InstructionValue<'_>, index: u32) -> anyhow::Result<BasicValueEnum<'_>> {
     instruction_basic_operand(instruction, index).with_context(|| format!("missing value operand {index}"))
+}
+
+// Conservatively keep all extent tracking in a function that queries objectsize.
+// Without that intrinsic, no lowering consumer can observe the extra GEP state.
+fn function_contains_objectsize(function: FunctionValue<'_>) -> bool {
+    function.get_basic_blocks().iter().any(|block| {
+        block.get_instructions().any(|instruction| {
+            instruction.get_opcode() == InstructionOpcode::Call
+                && CallInst::new(instruction).get_call_function().is_some_and(|callee| {
+                    callee.get_name().to_bytes().starts_with(b"llvm.objectsize.")
+                })
+        })
+    })
 }
 
 // 是否存在会走 native bridge 的调用指令；用于决定是否预留 native_call ABI 寄存器跨度。
