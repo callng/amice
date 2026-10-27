@@ -288,6 +288,8 @@ pub struct DeadBytecodeProfile {
 /// decoder pipeline 步骤。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecoderStep {
+    /// Ciphertext feedback, reset from function key and instruction byte PC.
+    RecordFeedback,
     /// 使用 per-function key stream XOR 字节流。
     XorStream,
     /// 减去 per-function additive stream。
@@ -2813,7 +2815,9 @@ fn parse_decoder(source: &str) -> Result<DecoderProfile, ProfileError> {
                 "decoder.vm has unsupported statement: {line}"
             )));
         };
-        let parsed = if step == "xor_stream key=function_key" {
+        let parsed = if step == "record_feedback key=function_key" {
+            DecoderStep::RecordFeedback
+        } else if step == "xor_stream key=function_key" {
             DecoderStep::XorStream
         } else if step == "add_stream key=function_key" {
             DecoderStep::AddStream

@@ -1464,12 +1464,28 @@ impl<'a> BytecodeEncoder<'a> {
     }
 
     fn apply_encoder_pipeline(&self, records: Vec<InstructionRecord>, key: u64) -> anyhow::Result<Vec<u8>> {
+        let widths = records
+            .iter()
+            .map(|record| record.decoded_width as usize)
+            .collect::<Vec<_>>();
         let mut state = EncoderState::Records(records);
 
         // `decoder.vm` 描述的是 runtime 解码顺序。编译器必须反向遍历并应用每一步的逆变换；
         // 否则生成的 runtime 和 bytecode image 会悄悄不一致。
         for step in self.profile.decoder.steps.iter().rev() {
             state = match (step, state) {
+                (DecoderStep::RecordFeedback, EncoderState::Bytes(mut bytes)) => {
+                    let mut start = 0;
+                    for width in &widths {
+                        let mut feedback = record_feedback_seed(key, start as u64);
+                        for (relative, byte) in bytes[start..start + width].iter_mut().enumerate() {
+                            *byte ^= feedback as u8;
+                            feedback = record_feedback_next(feedback, *byte, (start + relative) as u64);
+                        }
+                        start += width;
+                    }
+                    EncoderState::Bytes(bytes)
+                },
                 (DecoderStep::BitUnpack, EncoderState::Records(records)) => {
                     EncoderState::Tokens(pack_instruction_records(records)?)
                 },
@@ -2046,6 +2062,7 @@ fn profile_key(profile: &ProfilePackage) -> u64 {
 
 fn decoder_step_tag(step: DecoderStep) -> u16 {
     match step {
+        DecoderStep::RecordFeedback => 5,
         DecoderStep::XorStream => 0,
         DecoderStep::AddStream => 1,
         DecoderStep::Rol { amount } => 0x100 | amount as u16,
@@ -2053,6 +2070,20 @@ fn decoder_step_tag(step: DecoderStep) -> u16 {
         DecoderStep::VarintDecode => 3,
         DecoderStep::BitUnpack => 4,
     }
+}
+
+/// Public diversification, not a secret or an authentication mechanism.
+/// Instructions can be entered independently after branches and loop backedges.
+pub fn record_feedback_seed(key: u64, pc: u64) -> u64 {
+    key ^ pc.wrapping_mul(0xd6e8_feb8_6659_fd93) ^ 0xa5a3_56e5_2c1b_4f27
+}
+
+/// Feed back the pre-stream-transform ciphertext, including varint continuation bytes.
+pub fn record_feedback_next(state: u64, cipher: u8, offset: u64) -> u64 {
+    state
+        .rotate_left(9)
+        .wrapping_add((cipher as u64) ^ offset.wrapping_mul(0x9e37_79b9_7f4a_7c15))
+        ^ 0xbf58_476d_1ce4_e5b9
 }
 
 impl Hash for VmInstruction {
@@ -4504,7 +4535,25 @@ pc = next # 执行继续到下一条字节码指令
 
     #[test]
     fn encoded_loop_executes_with_builtin_profile() {
-        let profile = ProfilePackage::builtin_test().expect("profile");
+        encoded_loop_executes(false);
+    }
+
+    #[test]
+    fn record_feedback_executes_branches_backedges_and_fake_records() {
+        encoded_loop_executes(true);
+    }
+
+    fn encoded_loop_executes(feedback: bool) {
+        let mut profile = ProfilePackage::builtin_test().expect("profile");
+        if feedback {
+            let index = profile
+                .decoder
+                .steps
+                .iter()
+                .position(|s| *s == DecoderStep::VarintDecode)
+                .unwrap();
+            profile.decoder.steps.insert(index, DecoderStep::RecordFeedback);
+        }
         verify_profile(&profile).expect("verified profile");
         let mut builder = VmFunctionBuilder::new("sum_masked_loop", 1, 32);
         let entry = builder.new_label();
@@ -4597,6 +4646,69 @@ pc = next # 执行继续到下一条字节码指令
             execute_for_test(&profile, &image, &[9]),
             (0..9).map(|i| (i ^ 9) & 7).sum()
         );
+        for n in [0, 1, 2, 7, 31, 127] {
+            assert_eq!(
+                execute_for_test(&profile, &image, &[n]),
+                (0..n).map(|i| (i ^ n) & 7).sum()
+            );
+        }
+    }
+
+    #[test]
+    fn record_feedback_parser_and_verifier_reject_ambiguous_order() {
+        let decoder = include_str!("../profiles/amice-simple-vmp/decoder.vm");
+        let decoder = decoder.replace(
+            "  step varint_decode",
+            "  step record_feedback key=function_key\n  step varint_decode",
+        );
+        let profile = profile_with_decoder(&decoder);
+        verify_profile(&profile).unwrap();
+        let image = BytecodeEncoder::new(&profile).encode(&add_function()).unwrap();
+        assert_eq!(execute_for_test(&profile, &image, &[u32::MAX as u64, 3]), 2);
+        let mut duplicate = profile.clone();
+        duplicate.decoder.steps.insert(0, DecoderStep::RecordFeedback);
+        assert!(
+            verify_profile(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("at most one")
+        );
+        let mut misplaced = profile.clone();
+        misplaced.decoder.steps.retain(|s| *s != DecoderStep::RecordFeedback);
+        misplaced.decoder.steps.insert(0, DecoderStep::RecordFeedback);
+        assert!(
+            verify_profile(&misplaced)
+                .unwrap_err()
+                .to_string()
+                .contains("immediately precede")
+        );
+    }
+
+    #[test]
+    fn record_feedback_changes_ciphertext_without_changing_record_offsets() {
+        let mut profile = ProfilePackage::builtin_test().unwrap();
+        let function = add_function();
+        let plain = BytecodeEncoder::new(&profile).encode(&function).unwrap();
+        let index = profile
+            .decoder
+            .steps
+            .iter()
+            .position(|s| *s == DecoderStep::VarintDecode)
+            .unwrap();
+        profile.decoder.steps.insert(index, DecoderStep::RecordFeedback);
+        let image = BytecodeEncoder::new(&profile).encode(&function).unwrap();
+        assert_eq!(image.code_len, plain.code_len);
+        assert_ne!(image.code_bytes(), plain.code_bytes());
+        assert_eq!(
+            decode_for_test(&profile, &image).len(),
+            image.instruction_count as usize
+        );
+        // A changed ciphertext byte influences subsequent operand decoding.
+        let key = 0xfedc_ba98_7654_3210;
+        let a = record_feedback_next(record_feedback_seed(key, 0), 0x80, 0);
+        let b = record_feedback_next(record_feedback_seed(key, 0), 0x81, 0);
+        assert_ne!(a as u8, b as u8);
+        assert_ne!(record_feedback_seed(key, 0), record_feedback_seed(key, 6));
     }
 
     fn add_function() -> VmFunction {
@@ -4926,6 +5038,37 @@ pc = next # 执行继续到下一条字节码指令
         let mut bytes = image.code_bytes().to_vec();
         for step in &profile.decoder.steps {
             match step {
+                DecoderStep::RecordFeedback => {
+                    let mut start = 0;
+                    for _ in 0..image.instruction_count {
+                        let mut state = record_feedback_seed(image.key, start as u64);
+                        let mut cursor = start;
+                        loop {
+                            let cipher = bytes[cursor];
+                            bytes[cursor] ^= state as u8;
+                            state = record_feedback_next(state, cipher, cursor as u64);
+                            cursor += 1;
+                            if bytes[cursor - 1] & 0x80 == 0 {
+                                break;
+                            }
+                            assert!(cursor - start < 10, "invalid opcode varint");
+                        }
+                        let mut opcode_offset = start;
+                        let opcode = decode_varint_for_test(&bytes, &mut opcode_offset);
+                        let width = profile
+                            .isa
+                            .by_opcode(opcode as Opcode)
+                            .expect("known opcode")
+                            .decoded_width as usize;
+                        for (offset, byte) in bytes.iter_mut().enumerate().take(start + width).skip(cursor) {
+                            let cipher = *byte;
+                            *byte ^= state as u8;
+                            state = record_feedback_next(state, cipher, offset as u64);
+                        }
+                        start += width;
+                    }
+                    assert_eq!(start, bytes.len());
+                },
                 DecoderStep::XorStream => {
                     bytes
                         .iter_mut()

@@ -1960,8 +1960,24 @@ fn verify_decoder_steps(steps: &[DecoderStep]) -> Result<(), ProfileError> {
         ));
     }
 
+    let feedback_count = steps
+        .iter()
+        .filter(|step| **step == DecoderStep::RecordFeedback)
+        .count();
+    if feedback_count > 1 {
+        return Err(ProfileError::Invalid(
+            "decoder.vm permits at most one record_feedback".to_owned(),
+        ));
+    }
     for (index, step) in steps.iter().enumerate() {
         match step {
+            DecoderStep::RecordFeedback => {
+                if index + 1 != varint {
+                    return Err(ProfileError::Invalid(
+                        "decoder.vm record_feedback must immediately precede varint_decode".to_owned(),
+                    ));
+                }
+            },
             DecoderStep::Rol { amount } | DecoderStep::Ror { amount } => {
                 if !(1..=7).contains(amount) {
                     return Err(ProfileError::Invalid(format!(
@@ -1988,7 +2004,11 @@ fn verify_decoder_steps(steps: &[DecoderStep]) -> Result<(), ProfileError> {
     if !steps[..varint].iter().any(|step| {
         matches!(
             step,
-            DecoderStep::XorStream | DecoderStep::AddStream | DecoderStep::Rol { .. } | DecoderStep::Ror { .. }
+            DecoderStep::RecordFeedback
+                | DecoderStep::XorStream
+                | DecoderStep::AddStream
+                | DecoderStep::Rol { .. }
+                | DecoderStep::Ror { .. }
         )
     }) {
         return Err(ProfileError::Invalid(

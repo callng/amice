@@ -52,11 +52,23 @@ int main(void) {
         if ($LASTEXITCODE -ne 0) { throw "$Language baseline compile failed" }
         $Baseline = @(& $Plain)
         if ($LASTEXITCODE -ne 0 -or ($Baseline -join [Environment]::NewLine) -ne 'AMICE_WINDOWS_STRING_TEST') { throw "$Language baseline execution failed" }
-        foreach ($Case in @('string', 'simd_string', 'flatten', 'vmp')) {
+        foreach ($Case in @('string', 'simd_string', 'flatten', 'vmp', 'vmp_feedback')) {
             # Strong transforms apply to a supported integer function; main
             # exercises string encryption and the native Windows CRT.
             $CaseText = $Text
-            if ($Case -in @('flatten', 'vmp')) { $CaseText = $Text.Replace('noinline))', ('noinline, annotate("+' + $Case + '")))')) }
+            $Transform = if ($Case -eq 'vmp_feedback') { 'vmp' } else { $Case }
+            if ($Transform -in @('flatten', 'vmp')) { $CaseText = $Text.Replace('noinline))', ('noinline, annotate("+' + $Transform + '")))')) }
+            Remove-Item Env:AMICE_VM_PROFILE_PATH -ErrorAction SilentlyContinue
+            if ($Case -eq 'vmp_feedback') {
+                $Profile = Join-Path $OutputDir 'feedback-profile'
+                New-Item -ItemType Directory -Force $Profile | Out-Null
+                Copy-Item (Join-Path $PSScriptRoot '../crates/amice-vm/profiles/amice-simple-vmp/*') $Profile -Force
+                $Decoder = Join-Path $Profile 'decoder.vm'
+                $DecoderText = (Get-Content -LiteralPath $Decoder -Raw).Replace(
+                    '  step varint_decode', "  step record_feedback key=function_key`n  step varint_decode")
+                [IO.File]::WriteAllText($Decoder, $DecoderText)
+                $env:AMICE_VM_PROFILE_PATH = $Profile
+            }
             Set-Content -LiteralPath $InputFile -Value $CaseText -Encoding ascii
             $Ir = Join-Path $OutputDir "input-$Case-$Language.ll"
             & $Clang -O0 -S -emit-llvm $InputFile -o $Ir
@@ -70,7 +82,8 @@ int main(void) {
             if ($LASTEXITCODE -ne 0) { throw "$Language/$Case plugin execution failed" }
             $TransformedText = Get-Content -LiteralPath $Transformed -Raw
             if ($Case -eq 'flatten' -and -not $TransformedText.Contains('dispatcher')) { throw "$Language flatten did not emit a dispatcher" }
-            if ($Case -eq 'vmp' -and -not $TransformedText.Contains('AMICE_VMP_RUNTIME_BYTECODE')) { throw "$Language VMP did not emit a runtime marker" }
+            if ($Transform -eq 'vmp' -and -not $TransformedText.Contains('AMICE_VMP_RUNTIME_BYTECODE')) { throw "$Language VMP did not emit a runtime marker" }
+            if ($Case -eq 'vmp_feedback' -and -not $TransformedText.Contains('feedback.next')) { throw "$Language feedback decoder did not emit state updates" }
             & $Clang $Transformed -o $Executable
             if ($LASTEXITCODE -ne 0) { throw "$Language/$Case transformed compile failed" }
             $Actual = @(& $Executable)

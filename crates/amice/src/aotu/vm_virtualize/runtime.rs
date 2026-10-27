@@ -789,7 +789,7 @@ fn emit_read_varint<'ctx>(
     let next_offset = builder.build_int_add(offset, i64_type.const_int(1, false), "next.offset")?;
     builder.build_store(offset_ptr, next_offset)?;
 
-    let decoded = decode_byte_from_profile(&builder, profile, i8_type, i64_type, raw, key, offset)?;
+    let decoded = decode_byte_from_profile(&builder, profile, i8_type, i64_type, raw, key, offset, offset_ptr)?;
     let decoded64 = builder.build_int_z_extend(decoded, i64_type, "decoded64")?;
     let payload = builder.build_and(decoded64, i64_type.const_int(0x7f, false), "payload")?;
     let shift = load_i64(&builder, i64_type, shift_ptr, "shift")?;
@@ -1250,7 +1250,18 @@ fn emit_dispatch_cfg<'ctx>(
     // 契约是 verifier 拒绝不支持的宽值 lowering，而不是让 VM 悄悄改变形状并丢掉 v128 寄存器组。
     let _q_regs = builder.build_alloca(q_type, "q")?;
     let pc_ptr = builder.build_alloca(i64_type, "pc")?;
-    let offset_ptr = builder.build_alloca(i64_type, "offset")?;
+    // Slot 0 is the reader cursor; slot 1 is instruction-local feedback.
+    // Allocate once on VM entry, never on a loop backedge. Const-pool readers
+    // retain their separate, unchanged ABI and do not touch this state.
+    let reader_state_type = i64_type.array_type(2);
+    let reader_state = builder.build_alloca(reader_state_type, "offset.state")?;
+    let offset_ptr = builder.build_gep2(
+        reader_state_type,
+        reader_state,
+        &[i64_type.const_zero(), i64_type.const_zero()],
+        "offset.ptr",
+    )?;
+    let feedback_ptr = builder.build_gep2(i64_type, offset_ptr, &[i64_type.const_int(1, false)], "feedback.ptr")?;
     builder.build_store(pc_ptr, i64_type.const_zero())?;
 
     // 所有 VM x 寄存器先归零，再按 ABI 写入 host 参数。这样 handler 的安全跳过路径、
@@ -1410,6 +1421,12 @@ fn emit_dispatch_cfg<'ctx>(
     let pc = load_i64(&builder, i64_type, pc_ptr, "pc")?;
     let pc_in_range = builder.build_int_compare(IntPredicate::ULT, pc, pc_limit, "pc.in.range")?;
     builder.build_store(offset_ptr, pc)?;
+    if profile.decoder.steps.contains(&DecoderStep::RecordFeedback) {
+        let pc_mix = builder.build_int_mul(pc, i64_type.const_int(0xd6e8_feb8_6659_fd93, false), "feedback.pc")?;
+        let seed = builder.build_xor(key, pc_mix, "feedback.key")?;
+        let seed = builder.build_xor(seed, i64_type.const_int(0xa5a3_56e5_2c1b_4f27, false), "feedback.seed")?;
+        builder.build_store(feedback_ptr, seed)?;
+    }
     builder.build_conditional_branch(pc_in_range, execute_decode, default_return)?;
 
     let handler_alias_order = handler_alias_order(profile, handler_salt);
@@ -9858,10 +9875,32 @@ fn decode_byte_from_profile<'ctx>(
     raw: IntValue<'ctx>,
     key: IntValue<'ctx>,
     offset: IntValue<'ctx>,
+    offset_ptr: PointerValue<'ctx>,
 ) -> anyhow::Result<IntValue<'ctx>> {
     let mut decoded = raw;
     for step in &profile.decoder.steps {
         match step {
+            DecoderStep::RecordFeedback => {
+                let feedback_ptr =
+                    builder.build_gep2(i64_type, offset_ptr, &[i64_type.const_int(1, false)], "feedback.ptr")?;
+                let state = load_i64(builder, i64_type, feedback_ptr, "feedback.state")?;
+                let cipher = builder.build_int_z_extend(decoded, i64_type, "feedback.cipher")?;
+                let mask = builder.build_int_truncate(state, i8_type, "feedback.mask")?;
+                decoded = builder.build_xor(decoded, mask, "feedback.plain")?;
+                let left = builder.build_left_shift(state, i64_type.const_int(9, false), "feedback.left")?;
+                let right = builder.build_right_shift(state, i64_type.const_int(55, false), false, "feedback.right")?;
+                let rotated = builder.build_or(left, right, "feedback.rotated")?;
+                let position = builder.build_int_mul(
+                    offset,
+                    i64_type.const_int(0x9e37_79b9_7f4a_7c15, false),
+                    "feedback.position",
+                )?;
+                let input = builder.build_xor(cipher, position, "feedback.input")?;
+                let next = builder.build_int_add(rotated, input, "feedback.add")?;
+                let next =
+                    builder.build_xor(next, i64_type.const_int(0xbf58_476d_1ce4_e5b9, false), "feedback.next")?;
+                builder.build_store(feedback_ptr, next)?;
+            },
             DecoderStep::XorStream => {
                 let key_byte = key_stream_byte(builder, i8_type, i64_type, key, offset)?;
                 decoded = builder.build_xor(decoded, key_byte, "decoded.xor")?;
